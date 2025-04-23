@@ -14,24 +14,51 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 class Agent:
+    """
+    Agent类封装了语言模型的操作
+    
+    主要功能:
+    1. 加载预训练语言模型和分词器
+    2. 提供推理方法，生成文本或评分
+    3. 支持批量推理，提高效率
+    """
     def __init__(self, model_name):
+        """
+        初始化Agent
+        
+        参数:
+            model_name: 预训练模型的名称或路径
+        """
+        # 加载预训练语言模型
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype="auto",
             device_map="auto"
         )
+        # 加载分词器
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             padding_side='left'
         )
     
     def infer_score(self, prompts):
+        """
+        对提示进行评分推理
+        
+        参数:
+            prompts: 提示列表
+            
+        返回:
+            评分列表，表示每个提示的相关性得分
+        """
         if len(prompts) == 0:
             return []
+        # 对提示进行编码
         encoded_input = self.tokenizer(prompts, return_tensors='pt', padding=True, truncation=True)
         input_ids = encoded_input.input_ids.cuda(self.model.device)
         attention_mask = encoded_input.attention_mask.cuda(self.model.device)
 
+        # 生成输出并获取评分
         outputs = self.model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -40,11 +67,24 @@ class Agent:
             return_dict_in_generate=True, 
             do_sample=False
         )
+        # 获取"True"标记的ID
         true_token_id = self.tokenizer.convert_tokens_to_ids('True')
+        # 计算"True"标记的概率作为评分
         probs = outputs.scores[0].softmax(dim=-1)[:, true_token_id].cpu().numpy().tolist()
         return probs
 
     def infer(self, prompt, sample=False):
+        """
+        对单个提示进行推理
+        
+        参数:
+            prompt: 提示文本
+            sample: 是否使用采样生成
+            
+        返回:
+            生成的文本
+        """
+        # 应用聊天模板
         text = self.tokenizer.apply_chat_template(
             [{
                 "content": prompt.strip(),
@@ -54,26 +94,43 @@ class Agent:
             max_length=992,
             add_generation_prompt=True
         )
+        # 对提示进行编码
         model_inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
+        # 设置采样参数
         if sample:
             model_inputs["do_sample"] = True
             model_inputs["temperature"] = 2.0
             model_inputs["top_p"] = 0.8
 
+        # 生成输出
         generated_ids = self.model.generate(
             **model_inputs,
             max_new_tokens=512
         )
+        # 提取新生成的标记
         generated_ids = [
             output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
         ]
 
+        # 解码生成的标记
         response = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
         return response
     
     def batch_infer(self, prompts, batch_size=8, sample=False):
+        """
+        批量推理多个提示
+        
+        参数:
+            prompts: 提示列表
+            batch_size: 批处理大小
+            sample: 是否使用采样生成
+            
+        返回:
+            生成的文本列表
+        """
         if len(prompts) == 0:
             return []
+        # 对所有提示应用聊天模板
         texts = [self.tokenizer.apply_chat_template(
             [{
                 "content": prompt.strip(),
@@ -84,19 +141,25 @@ class Agent:
             add_generation_prompt=True
         ) for prompt in prompts]
         responses = []
+        # 分批处理提示
         for i in range(0, len(texts), batch_size):
+            # 对当前批次进行编码
             model_inputs = self.tokenizer(texts[i: i + batch_size], return_tensors="pt", truncation=True, padding=True).to(self.model.device)
+            # 设置采样参数
             if sample:
                 model_inputs["do_sample"] = True
                 model_inputs["temperature"] = 2.0
                 model_inputs["top_p"] = 0.8
+            # 生成输出
             generated_ids = self.model.generate(
                 **model_inputs,
                 max_new_tokens=512
             )
+            # 提取新生成的标记
             generated_ids = [
                 output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
             ]
+            # 解码生成的标记并添加到结果列表
             for response in self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True):
                 responses.append(response)
         return responses

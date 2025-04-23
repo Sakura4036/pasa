@@ -26,27 +26,34 @@ from models      import Agent
 from paper_agent import PaperAgent
 from datetime    import datetime, timedelta
 
+# 解析命令行参数
 parser = argparse.ArgumentParser()
-parser.add_argument('--input_file',     type=str, default="data/RealScholarQuery/test.jsonl")
-parser.add_argument('--crawler_path',   type=str, default="checkpoints/pasa-7b-crawler")
-parser.add_argument('--selector_path',  type=str, default="checkpoints/pasa-7b-selector")
-parser.add_argument('--output_folder',  type=str, default="results")
-parser.add_argument('--expand_layers',  type=int, default=2)
-parser.add_argument('--search_queries', type=int, default=5)
-parser.add_argument('--search_papers',  type=int, default=10)
-parser.add_argument('--expand_papers',  type=int, default=20)
-parser.add_argument('--threads_num',    type=int, default=20)
+parser.add_argument('--input_file',     type=str, default="data/RealScholarQuery/test.jsonl")  # 输入文件路径
+parser.add_argument('--crawler_path',   type=str, default="checkpoints/pasa-7b-crawler")        # 爬虫模型路径
+parser.add_argument('--selector_path',  type=str, default="checkpoints/pasa-7b-selector")       # 选择器模型路径
+parser.add_argument('--output_folder',  type=str, default="results")                             # 输出文件夹路径
+parser.add_argument('--expand_layers',  type=int, default=2)                                     # 扩展层数
+parser.add_argument('--search_queries', type=int, default=5)                                     # 搜索查询数量
+parser.add_argument('--search_papers',  type=int, default=10)                                    # 每个查询返回的论文数量
+parser.add_argument('--expand_papers',  type=int, default=20)                                    # 每层扩展的论文数量
+parser.add_argument('--threads_num',    type=int, default=20)                                    # 并行线程数
 args = parser.parse_args()
 
+# 初始化爬虫和选择器模型
 crawler = Agent(args.crawler_path)
 selector = Agent(args.selector_path)
 
+# 处理输入文件中的每个查询
 with open(args.input_file) as f:
     for idx, line in enumerate(f.readlines()):
+        # 解析JSON数据
         data = json.loads(line)
+        # 计算截止日期（发布时间前7天）
         end_date = data['source_meta']['published_time']
         end_date = datetime.strptime(end_date, "%Y%m%d") - timedelta(days=7)
         end_date = end_date.strftime("%Y%m%d")
+        
+        # 创建PaperAgent实例
         paper_agent = PaperAgent(
             user_query     = data['question'], 
             crawler        = crawler,
@@ -58,10 +65,14 @@ with open(args.input_file) as f:
             expand_papers  = args.expand_papers,
             threads_num    = args.threads_num
         )
+        
+        # 如果数据中包含答案，则添加到根节点的额外信息中
         if "answer" in data:
             paper_agent.root.extra["answer"] = data["answer"]
         
+        # 运行PaperAgent
         paper_agent.run()
         
+        # 如果指定了输出文件夹，则将结果保存为JSON文件
         if args.output_folder != "":
             json.dump(paper_agent.root.todic(), open(os.path.join(args.output_folder, f"{idx}.json"), "w"), indent=2)
